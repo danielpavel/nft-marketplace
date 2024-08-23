@@ -2,11 +2,13 @@ import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Commitment, KeypairSigner, Umi } from "@metaplex-foundation/umi";
 import { NftMarketplace } from "../target/types/nft_marketplace";
-import { mintNft } from "./utils/nft";
+import { createAndMintNftForCollection } from "./utils/nft";
 import { initUmi } from "./utils/umi";
 
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { expect } from "chai";
+import { MPL_TOKEN_METADATA_PROGRAM_ID } from "@metaplex-foundation/mpl-token-metadata";
+import { toWeb3JsPublicKey } from "@metaplex-foundation/umi-web3js-adapters";
 
 const commitment: Commitment = "finalized"; // processed, confirmed, finalized
 
@@ -23,8 +25,14 @@ describe("nft-marketplace", () => {
   let user1 = anchor.web3.Keypair.generate();
   let user2 = anchor.web3.Keypair.generate();
 
-  let nft1: { mint: KeypairSigner; ata: anchor.web3.PublicKey };
-  let nft2: { mint: KeypairSigner; ata: anchor.web3.PublicKey };
+  let marketplace: anchor.web3.PublicKey;
+  let rewardsMint: anchor.web3.PublicKey;
+
+  let nft: {
+    mint: anchor.web3.PublicKey;
+    ata: anchor.web3.PublicKey;
+    collection: anchor.web3.PublicKey;
+  };
 
   before(async () => {
     await Promise.all(
@@ -42,38 +50,20 @@ describe("nft-marketplace", () => {
 
     umi = initUmi(provider);
 
-    // We need to wait for the transaction to be confirmed
-    // await new Promise((resolve) => setTimeout(resolve, 13000));
-
     try {
-      const result1 = await mintNft({
+      const { mint, ata, collection } = await createAndMintNftForCollection(
         umi,
-        provider,
-        randomNumber: 1,
-        account: user1.publicKey,
-        uri: "https://arweave.net/123",
-      });
+        1,
+        user1.publicKey
+      );
 
-      if (result1.result.result.value.err) {
-        throw new Error(result1.result.result.value.err.toString());
-      }
+      console.log("[before] Collection mint", collection.toString());
+      console.log("[before] Mint", mint.toString());
+      console.log("[before] Ata", ata.toString());
 
-      const result2 = await mintNft({
-        umi,
-        provider,
-        randomNumber: 2,
-        account: user2.publicKey,
-        uri: "https://arweave.net/123",
-      });
-
-      if (result2.result.result.value.err) {
-        throw new Error(result1.result.result.value.err.toString());
-      }
-
-      nft1 = { mint: result1.mint, ata: result1.ata };
-      nft2 = { mint: result2.mint, ata: result2.ata };
+      nft = { mint, ata, collection };
     } catch (error) {
-      console.error(`[mintNft] Oops.. Something went wrong: ${error}`);
+      console.error(`Oops.. Something went wrong: ${error}`);
     }
   });
 
@@ -81,7 +71,7 @@ describe("nft-marketplace", () => {
     const name = "Penny Auction NFT Marketplace";
     const fee = 500; // 5% in basis points
 
-    const [marketplace, marketplaceBump] =
+    const [_marketplace, marketplaceBump] =
       anchor.web3.PublicKey.findProgramAddressSync(
         [
           anchor.utils.bytes.utf8.encode("marketplace"),
@@ -90,11 +80,15 @@ describe("nft-marketplace", () => {
         program.programId
       );
 
-    const [rewardsMint, rewardsBump] =
+    marketplace = _marketplace;
+
+    const [_rewardsMint, rewardsBump] =
       anchor.web3.PublicKey.findProgramAddressSync(
         [anchor.utils.bytes.utf8.encode("rewards"), marketplace.toBuffer()],
         program.programId
       );
+
+    rewardsMint = _rewardsMint;
 
     let accounts = {
       admin: initializer.publicKey,
@@ -124,6 +118,54 @@ describe("nft-marketplace", () => {
     } catch (err) {
       console.error(err);
     }
+  });
+
+  it("List", async () => {
+    const price = 1 * anchor.web3.LAMPORTS_PER_SOL;
+    const [listing, listingBump] = anchor.web3.PublicKey.findProgramAddressSync(
+      [
+        anchor.utils.bytes.utf8.encode("listing"),
+        marketplace.toBuffer(),
+        nft.mint.toBuffer(),
+      ],
+      program.programId
+    );
+
+    const vault = await getAssociatedTokenAddress(nft.mint, listing, true);
+
+    let accounts = {
+      maker: user1.publicKey,
+      marketplace,
+      makerMint: nft.mint,
+      collection: nft.collection,
+      makerAta: nft.ata,
+      listing,
+      vault,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    };
+
+    try {
+      let tx = await program.methods
+        .list(new anchor.BN(price))
+        .accounts(accounts)
+        .signers([user1])
+        .rpc();
+
+      console.log("Your transaction signature", tx);
+    } catch (error) {
+      console.error(error);
+    }
+
+    const listingAccount = await program.account.listing.fetch(listing);
+    expect(listingAccount.maker).deep.equal(user1.publicKey);
+    expect(listingAccount.mint).deep.equal(nft.mint);
+    expect(listingAccount.price.eq(new anchor.BN(price))).to.equal(true);
+    expect(listingAccount.bump).to.equal(listingBump);
+
+    const vaultAccount = await provider.connection.getTokenAccountBalance(
+      vault
+    );
+    expect(vaultAccount.value.amount).to.equal("1");
   });
 });
 

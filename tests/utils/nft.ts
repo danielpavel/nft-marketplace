@@ -1,9 +1,17 @@
 import { web3, Provider } from "@coral-xyz/anchor";
 
-import { generateSigner, percentAmount, Umi } from "@metaplex-foundation/umi";
-import { createNft } from "@metaplex-foundation/mpl-token-metadata";
-
-import { PublicKey } from "@solana/web3.js";
+import {
+  generateSigner,
+  KeypairSigner,
+  percentAmount,
+  PublicKey,
+  Umi,
+} from "@metaplex-foundation/umi";
+import {
+  createNft,
+  findMetadataPda,
+  verifyCollectionV1,
+} from "@metaplex-foundation/mpl-token-metadata";
 
 import {
   fromWeb3JsPublicKey,
@@ -11,18 +19,30 @@ import {
 } from "@metaplex-foundation/umi-web3js-adapters";
 import { getAssociatedTokenAddress } from "@solana/spl-token";
 
-export async function mintNft({
+async function createCollectionNft(umi: Umi) {
+  const collectionMint = generateSigner(umi);
+
+  const result = await createNft(umi, {
+    mint: collectionMint,
+    name: "My Collection",
+    uri: "https://arweave.net/123",
+    sellerFeeBasisPoints: percentAmount(5.5), // 5.5%
+    isCollection: true,
+  }).sendAndConfirm(umi);
+
+  return result.result.value.err ? null : collectionMint;
+}
+
+async function mintNft({
   umi,
-  provider,
   randomNumber,
   account,
-  uri,
+  collection,
 }: {
   umi: Umi;
-  provider: Provider;
   randomNumber: number;
-  account: PublicKey;
-  uri?: string;
+  account: web3.PublicKey;
+  collection: PublicKey;
 }) {
   const mint = generateSigner(umi);
 
@@ -35,26 +55,60 @@ export async function mintNft({
     const owner = fromWeb3JsPublicKey(account);
 
     const txBuilder = createNft(umi, {
-      name: `Test Nft ${randomNumber}`,
+      name: `My Nft ${randomNumber}`,
       mint,
       token: fromWeb3JsPublicKey(ata),
       tokenOwner: owner,
       authority: umi.payer,
       sellerFeeBasisPoints: percentAmount(5),
       isCollection: false,
-      uri,
+      collection: { key: collection, verified: false },
+      uri: "https://arweave.net/123",
     });
 
     let result = await txBuilder.sendAndConfirm(umi);
 
-    return { mint, ata, result };
-  } catch (error) {
-    const message = "[mintNft] Oops.. Something went wrong";
-
-    if (error instanceof web3.SendTransactionError) {
-      console.log(error.getLogs(provider.connection));
+    if (result.result.value.err) {
+      return null;
     }
 
-    throw Error(`${message} ${error}`);
+    return { mint, ata };
+  } catch (error) {
+    throw Error(`[mintNft] ${error}`);
+  }
+}
+
+export async function createAndMintNftForCollection(
+  umi: Umi,
+  randomNumber: number,
+  account: web3.PublicKey
+) {
+  try {
+    const collection = await createCollectionNft(umi);
+    const { mint, ata } = await mintNft({
+      umi,
+      randomNumber,
+      account,
+      collection: collection.publicKey,
+    });
+
+    // first find the metadata PDA to use later
+    const metadata = findMetadataPda(umi, {
+      mint: mint.publicKey,
+    });
+
+    await verifyCollectionV1(umi, {
+      metadata,
+      collectionMint: collection.publicKey,
+      authority: umi.payer,
+    }).sendAndConfirm(umi);
+
+    return {
+      mint: toWeb3JsPublicKey(mint.publicKey),
+      ata,
+      collection: toWeb3JsPublicKey(collection.publicKey),
+    };
+  } catch (err) {
+    throw Error(`[createAndMintNftForCollection] ${err}`);
   }
 }

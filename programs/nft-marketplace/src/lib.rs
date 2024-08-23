@@ -17,7 +17,8 @@ pub mod nft_marketplace {
     }
 
     pub fn list(ctx: Context<List>, price: u64) -> Result<()> {
-        ctx.accounts.create_listing(price, &ctx.bumps)
+        ctx.accounts.create_listing(price, &ctx.bumps)?;
+        ctx.accounts.transfer_to_vault()
     }
 
     pub fn delist(ctx: Context<Delist>) -> Result<()> {
