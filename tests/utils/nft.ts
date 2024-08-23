@@ -26,9 +26,6 @@ export async function mintNft({
 }) {
   const mint = generateSigner(umi);
 
-  const balance = await umi.rpc.getBalance(umi.payer.publicKey);
-  console.log("[creaNft] balance", balance);
-
   try {
     // Generate ATA for the NFT owner
     const ata = await getAssociatedTokenAddress(
@@ -50,7 +47,7 @@ export async function mintNft({
 
     let result = await txBuilder.sendAndConfirm(umi);
 
-    return result;
+    return { mint, ata, result };
   } catch (error) {
     const message = "[mintNft] Oops.. Something went wrong";
 

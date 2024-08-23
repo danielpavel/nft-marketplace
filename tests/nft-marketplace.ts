@@ -1,11 +1,14 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
-import { Commitment, Umi } from "@metaplex-foundation/umi";
+import { Commitment, KeypairSigner, Umi } from "@metaplex-foundation/umi";
 import { NftMarketplace } from "../target/types/nft_marketplace";
 import { mintNft } from "./utils/nft";
 import { initUmi } from "./utils/umi";
 
-const commitment: Commitment = "confirmed"; // processed, confirmed, finalized
+import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { expect } from "chai";
+
+const commitment: Commitment = "finalized"; // processed, confirmed, finalized
 
 describe("nft-marketplace", () => {
   // Configure the client to use the local cluster.
@@ -16,12 +19,16 @@ describe("nft-marketplace", () => {
 
   let umi: Umi;
 
+  let initializer = anchor.web3.Keypair.generate();
   let user1 = anchor.web3.Keypair.generate();
   let user2 = anchor.web3.Keypair.generate();
 
+  let nft1: { mint: KeypairSigner; ata: anchor.web3.PublicKey };
+  let nft2: { mint: KeypairSigner; ata: anchor.web3.PublicKey };
+
   before(async () => {
     await Promise.all(
-      [user1, user2].map(async (k) => {
+      [initializer, user1, user2].map(async (k) => {
         return await anchor
           .getProvider()
           .connection.requestAirdrop(
@@ -31,35 +38,92 @@ describe("nft-marketplace", () => {
       })
     ).then(confirmTxs);
 
-    const user1Balance = await provider.connection.getBalance(user1.publicKey);
-    const user2Balance = await provider.connection.getBalance(user2.publicKey);
-    const providerBalance = await provider.connection.getBalance(
-      provider.publicKey
-    );
-
-    console.log("User1 balance", user1Balance);
-    console.log("User2 balance", user2Balance);
-    console.log("Provider balance", providerBalance);
+    console.log("🟢 Airdrop Done!");
 
     umi = initUmi(provider);
 
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    // We need to wait for the transaction to be confirmed
+    // await new Promise((resolve) => setTimeout(resolve, 13000));
 
-    const result = await mintNft({
-      umi,
-      provider,
-      randomNumber: 1,
-      account: user1.publicKey,
-      uri: "https://arweave.net/123",
-    });
+    try {
+      const result1 = await mintNft({
+        umi,
+        provider,
+        randomNumber: 1,
+        account: user1.publicKey,
+        uri: "https://arweave.net/123",
+      });
 
-    console.log("Minted NFT", result);
+      if (result1.result.result.value.err) {
+        throw new Error(result1.result.result.value.err.toString());
+      }
+
+      const result2 = await mintNft({
+        umi,
+        provider,
+        randomNumber: 2,
+        account: user2.publicKey,
+        uri: "https://arweave.net/123",
+      });
+
+      if (result2.result.result.value.err) {
+        throw new Error(result1.result.result.value.err.toString());
+      }
+
+      nft1 = { mint: result1.mint, ata: result1.ata };
+      nft2 = { mint: result2.mint, ata: result2.ata };
+    } catch (error) {
+      console.error(`[mintNft] Oops.. Something went wrong: ${error}`);
+    }
   });
 
-  it("Is initialized!", async () => {
-    // Add your test here.
-    // const tx = await program.methods.initialize().rpc();
-    // console.log("Your transaction signature", tx);
+  it("Initialize Marketplace", async () => {
+    const name = "Penny Auction NFT Marketplace";
+    const fee = 500; // 5% in basis points
+
+    const [marketplace, marketplaceBump] =
+      anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          anchor.utils.bytes.utf8.encode("marketplace"),
+          anchor.utils.bytes.utf8.encode(name),
+        ],
+        program.programId
+      );
+
+    const [rewardsMint, rewardsBump] =
+      anchor.web3.PublicKey.findProgramAddressSync(
+        [anchor.utils.bytes.utf8.encode("rewards"), marketplace.toBuffer()],
+        program.programId
+      );
+
+    let accounts = {
+      admin: initializer.publicKey,
+      marketplace,
+      rewardsMint,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    };
+
+    try {
+      let tx = await program.methods
+        .initialize(name, fee)
+        .accounts(accounts)
+        .signers([initializer])
+        .rpc();
+
+      const marketplaceAccount = await program.account.marketplace.fetch(
+        marketplace
+      );
+
+      expect(marketplaceAccount.name).to.be.equal(name);
+      expect(marketplaceAccount.fee).to.be.equal(fee);
+      expect(marketplaceAccount.bump).to.be.equal(marketplaceBump);
+      expect(marketplaceAccount.admin).deep.equal(initializer.publicKey);
+      expect(marketplaceAccount.rewardsBumps).to.be.equal(rewardsBump);
+
+      console.log("Your transaction signature", tx);
+    } catch (err) {
+      console.error(err);
+    }
   });
 });
 
