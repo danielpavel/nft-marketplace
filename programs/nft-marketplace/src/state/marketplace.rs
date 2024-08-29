@@ -6,7 +6,8 @@ pub struct Marketplace {
     pub fee: u16,
     pub name: String,
     pub bump: u8,
-    pub rewards_bumps: u8,
+    pub rewards_bump: u8,
+    pub treasury_bump: u8,
 }
 
 impl Space for Marketplace {

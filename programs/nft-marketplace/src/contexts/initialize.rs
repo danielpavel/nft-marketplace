@@ -30,6 +30,12 @@ pub struct Initialize<'info> {
     )]
     rewards_mint: InterfaceAccount<'info, Mint>,
 
+    #[account(
+        seeds = [b"treasury", marketplace.key().as_ref()],
+        bump,
+    )]
+    pub treasury: SystemAccount<'info>,
+
     system_program: Program<'info, System>,
     token_program: Interface<'info, TokenInterface>,
 }
@@ -46,7 +52,8 @@ impl<'info> Initialize<'info> {
             fee,
             name,
             bump: bumps.marketplace,
-            rewards_bumps: bumps.rewards_mint,
+            rewards_bump: bumps.rewards_mint,
+            treasury_bump: bumps.treasury,
         });
 
         Ok(())

@@ -27,6 +27,7 @@ describe("nft-marketplace", () => {
 
   let marketplace: anchor.web3.PublicKey;
   let rewardsMint: anchor.web3.PublicKey;
+  let treasury: anchor.web3.PublicKey;
 
   let nft: {
     mint: anchor.web3.PublicKey;
@@ -90,10 +91,19 @@ describe("nft-marketplace", () => {
 
     rewardsMint = _rewardsMint;
 
+    const [_treasury, treasuryBump] =
+      anchor.web3.PublicKey.findProgramAddressSync(
+        [anchor.utils.bytes.utf8.encode("treasury"), marketplace.toBuffer()],
+        program.programId
+      );
+
+    treasury = _treasury;
+
     let accounts = {
       admin: initializer.publicKey,
       marketplace,
       rewardsMint,
+      treasury,
       tokenProgram: TOKEN_PROGRAM_ID,
     };
 
@@ -112,7 +122,8 @@ describe("nft-marketplace", () => {
       expect(marketplaceAccount.fee).to.be.equal(fee);
       expect(marketplaceAccount.bump).to.be.equal(marketplaceBump);
       expect(marketplaceAccount.admin).deep.equal(initializer.publicKey);
-      expect(marketplaceAccount.rewardsBumps).to.be.equal(rewardsBump);
+      expect(marketplaceAccount.rewardsBump).to.be.equal(rewardsBump);
+      expect(marketplaceAccount.treasuryBump).to.be.equal(treasuryBump);
 
       console.log("Your transaction signature", tx);
     } catch (err) {
@@ -121,7 +132,7 @@ describe("nft-marketplace", () => {
   });
 
   it("List", async () => {
-    const price = 1 * anchor.web3.LAMPORTS_PER_SOL;
+    const price = 3 * anchor.web3.LAMPORTS_PER_SOL;
     const [listing, listingBump] = anchor.web3.PublicKey.findProgramAddressSync(
       [
         anchor.utils.bytes.utf8.encode("listing"),
@@ -166,6 +177,55 @@ describe("nft-marketplace", () => {
       vault
     );
     expect(vaultAccount.value.amount).to.equal("1");
+  });
+
+  it("Delist", async () => {
+    const [listing, _listingBump] = anchor.web3.PublicKey.findProgramAddressSync(
+      [
+        anchor.utils.bytes.utf8.encode("listing"),
+        marketplace.toBuffer(),
+        nft.mint.toBuffer(),
+      ],
+      program.programId
+    );
+
+    const vault = await getAssociatedTokenAddress(nft.mint, listing, true);
+
+    let accounts = {
+      maker: user1.publicKey,
+      marketplace,
+      makerMint: nft.mint,
+      makerAta: nft.ata,
+      listing,
+      vault,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    };
+
+    try {
+      let tx = await program.methods
+        .delist()
+        .accounts(accounts)
+        .signers([user1])
+        .rpc();
+
+      console.log("Your transaction signature", tx);
+    } catch (error) {
+      console.error(error);
+    }
+
+    const errorMessage = `Account does not exist or has no data ${listing.toBase58()}`;
+    try {
+      await program.account.listing.fetch(listing);
+    } catch (error) {
+      if (error instanceof Error) {
+        expect(error.message).to.deep.equal(errorMessage);
+      }
+    }
+
+    const vaultAccount = await provider.connection.getAccountInfo(
+      vault
+    );
+    expect(vaultAccount).to.be.null;
   });
 });
 

@@ -37,6 +37,7 @@ pub struct List<'info> {
         bump
     )]
     listing: Account<'info, Listing>,
+
     #[account(
         init,
         payer = maker,
@@ -44,6 +45,7 @@ pub struct List<'info> {
         associated_token::authority = listing,
     )]
     vault: InterfaceAccount<'info, TokenAccount>,
+
     #[account(
         seeds = [b"metadata", metadata_program.key().as_ref(), maker_mint.key().as_ref()],
         seeds::program = metadata_program.key(),

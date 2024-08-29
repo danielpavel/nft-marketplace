@@ -23,7 +23,6 @@ pub struct Delist<'info> {
     marketplace: Account<'info, Marketplace>,
 
     pub maker_mint: Box<InterfaceAccount<'info, Mint>>,
-    pub collection: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
         mut,
@@ -34,6 +33,7 @@ pub struct Delist<'info> {
 
     #[account(
         mut,
+        close = maker,
         seeds = [b"listing", marketplace.key().as_ref(), maker_mint.key().as_ref()],
         bump = listing.bump
     )]
@@ -54,10 +54,12 @@ pub struct Delist<'info> {
 
 impl<'info> Delist<'info> {
     pub fn withdraw_nft_and_close(&mut self) -> Result<()> {
+        let bump = [self.listing.bump];
         let signer_seeds = [&[
             b"listing",
             self.marketplace.to_account_info().key.as_ref(),
             self.maker_mint.to_account_info().key.as_ref(),
+            &bump
         ][..]];
 
         let accounts = TransferChecked {
@@ -87,17 +89,6 @@ impl<'info> Delist<'info> {
             accounts,
             &signer_seeds,
         );
-
-        close_account(ctx)?;
-
-        // Close the listing account
-        let accounts = CloseAccount {
-            account: self.listing.to_account_info(),
-            destination: self.maker.to_account_info(),
-            authority: self.maker.to_account_info(),
-        };
-
-        let ctx = CpiContext::new(self.token_program.to_account_info(), accounts);
 
         close_account(ctx)
     }
