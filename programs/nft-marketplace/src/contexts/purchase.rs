@@ -68,6 +68,7 @@ pub struct Purchase<'info> {
     vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
+        mut,
         seeds = [b"treasury", marketplace.key().as_ref()],
         bump,
     )]
@@ -84,7 +85,7 @@ impl<'info> Purchase<'info> {
 
         let amount_to_treasury = self.listing.price
             .checked_mul(self.marketplace.fee as u64).ok_or(ProgramError::ArithmeticOverflow)?
-            .checked_div(1000).ok_or(ProgramError::ArithmeticOverflow)?;
+            .checked_div(10000).ok_or(ProgramError::ArithmeticOverflow)?;
 
         // Transfer the amount to the treasury.
         self.transfer_sol(
@@ -113,24 +114,25 @@ impl<'info> Purchase<'info> {
         let transfer_instruction = system_instruction::transfer(from.key, to.key, amount);
 
         // Invoke the transfer instruction
-        anchor_lang::solana_program::program::invoke_signed(
+        anchor_lang::solana_program::program::invoke(
             &transfer_instruction,
             &[
                 from.to_account_info(),
                 to.to_account_info(),
                 self.system_program.to_account_info(),
             ],
-            &[],
         )?;
 
         Ok(())
     }
 
     pub fn withdraw_nft_and_close(&mut self) -> Result<()> {
+        let bump = [self.listing.bump];
         let signer_seeds = [&[
             b"listing",
             self.marketplace.to_account_info().key.as_ref(),
             self.mint.to_account_info().key.as_ref(),
+            &bump
         ][..]];
 
         let accounts = TransferChecked {
@@ -144,7 +146,7 @@ impl<'info> Purchase<'info> {
             self.token_program.to_account_info(),
             accounts,
             &signer_seeds,
-            );
+        );
 
         transfer_checked(cpi_context, 1, self.mint.decimals)?;
 
@@ -159,18 +161,7 @@ impl<'info> Purchase<'info> {
             self.token_program.to_account_info(),
             accounts,
             &signer_seeds,
-            );
-
-        close_account(ctx)?;
-
-        // Close the listing account
-        let accounts = CloseAccount {
-            account: self.listing.to_account_info(),
-            destination: self.maker.to_account_info(),
-            authority: self.maker.to_account_info(),
-        };
-
-        let ctx = CpiContext::new(self.token_program.to_account_info(), accounts);
+        );
 
         close_account(ctx)
     }
